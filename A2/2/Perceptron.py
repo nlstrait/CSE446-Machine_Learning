@@ -118,13 +118,9 @@ def run_on_set(fn_suffix, num_epochs, uber_verbose=False):
             num_spaces = epoch_str_len - len(this_epoch_str)
             print(this_epoch_str + (" " * num_spaces) + ": " + str(mistakes))
 
-        train_err = 1 - calc_error_rate(w, test_data)
-        test_err = 1 - calc_error_rate(w, train_data)
+        train_err = calc_error_rate(w, test_data)
+        test_err = calc_error_rate(w, train_data)
         out.writerow([epoch_i, train_err, test_err])
-
-        # perfect fit on training, no need to keep going
-        if mistakes == 0:
-            break
 
     if uber_verbose:
         # report resulting weight vector
