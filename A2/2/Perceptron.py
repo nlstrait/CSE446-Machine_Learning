@@ -105,39 +105,78 @@ def find_min_margin(w, b, data, num_decimals=3):
     return np.round(min_margin, num_decimals)
 
 
-def tune(w, b, data, num_epochs=5000, dev_ratio=0.2):
+def tune(fn_suffix, num_epochs, dev_ratio=0.2):
     """
     Tune hyperparameter E (number of epochs)
-    :param w: weight vector
-    :param b: bias
-    :param data: feature vector matrix
+    :param fn_suffix: filename suffix to use for getting test and training data
+    :param num_epochs: number of epochs to perform
     :param dev_ratio: percent of test data to be used for development
     :return: E
     """
-    np.random.shuffle(data)
-    split_idx = np.round(dev_ratio * data.shape[0])
-    dev_data, train_data = data[:split_idx], data[split_idx:]
-    for epoch_i in range(0, num_epochs):
-        np.random.shuffle(test_data)
-        b, mistakes = epoch(test_data, w, b)
+    train_fn = fn_suffix + "train.tsv"
+    test_fn = fn_suffix + "test.tsv"
 
-        if uber_verbose:
-            this_epoch_str = "epoch_" + str(epoch_i)
-            num_spaces = epoch_str_len - len(this_epoch_str)
-            print(this_epoch_str + (" " * num_spaces) + ": " + str(mistakes))
+    train_data = get_data(train_fn)
+    test_data = get_data(test_fn)
 
-        train_err = calc_error_rate(w, b, test_data)
-        test_err = calc_error_rate(w, b, train_data)
-        out.writerow([epoch_i, train_err, test_err])
+    np.random.shuffle(train_data)
+    split_idx = int(np.round(dev_ratio * train_data.shape[0]))
+    dev_data = train_data[:split_idx]
+    train_data = train_data[split_idx:]
 
-        if train_err == prev_train_err:
+    w = np.zeros(test_data.shape[1] - 1)
+    b = 0
+
+    prev_dev_err = 1.0
+    num_epochs_without_change = 0
+    max_num_epochs_without_change = 100
+
+    best_epoch = None
+    best_w = None
+    best_b = None
+    lowest_dev_err = 1.0
+
+    exit_from_constant = False
+    exit_dev_err = None
+
+    for epoch_i in range(1, num_epochs):
+        np.random.shuffle(train_data)
+        b, mistakes = epoch(train_data, w, b)
+
+        dev_err = calc_error_rate(w, b, dev_data)
+
+        if dev_err == prev_dev_err:
             num_epochs_without_change += 1
             # if our training error has remained constant for a while, let's stop
             if num_epochs_without_change == max_num_epochs_without_change:
-                break
+                exit_from_constant = True
+                exit_dev_err = dev_err
+                # break
         else:
             num_epochs_without_change = 0
-            prev_train_err = train_err
+            prev_dev_err = dev_err
+
+            if dev_err < lowest_dev_err:
+                lowest_dev_err = dev_err
+                best_epoch = epoch_i
+                best_w = np.copy(w)
+                best_b = b
+                if dev_err == 0:
+                    break
+
+    train_err = calc_error_rate(w, b, train_data)
+    test_err = calc_error_rate(w, b, test_data)
+
+    print(fn_suffix[:-1] + " tuned")
+    if exit_from_constant:
+        print("  would have exited with " + str(exit_dev_err) + " dev err")
+    print("  best epoch : " + str(best_epoch))
+    print("   train err : " + str(train_err))
+    print("     dev err : " + str(lowest_dev_err))
+    print("    test err : " + str(test_err))
+    print(" ")
+
+    return best_epoch
 
 
 @threaded
@@ -159,8 +198,8 @@ def run_on_set(fn_suffix, num_epochs, uber_verbose=False):
     out = csv.writer(f)
     out.writerow(["Epoch", "Train Error", "Test Error"])
 
-    test_data = get_data(train_fn)
-    train_data = get_data(test_fn)
+    train_data = get_data(train_fn)
+    test_data = get_data(test_fn)
 
     w = np.zeros(test_data.shape[1] - 1)
     b = 0
@@ -168,22 +207,22 @@ def run_on_set(fn_suffix, num_epochs, uber_verbose=False):
     epoch_str_len = len("epoch_" + str(num_epochs))
 
     num_epochs_without_change = 0
-    max_num_epochs_without_change = 20
+    max_num_epochs_without_change = 50
 
     prev_train_err = 1.0
 
     # perform epochs on train data and note train and test error rate
     for epoch_i in range(0, num_epochs):
-        np.random.shuffle(test_data)
-        b, mistakes = epoch(test_data, w, b)
+        np.random.shuffle(train_data)
+        b, mistakes = epoch(train_data, w, b)
 
         if uber_verbose:
             this_epoch_str = "epoch_" + str(epoch_i)
             num_spaces = epoch_str_len - len(this_epoch_str)
             print(this_epoch_str + (" " * num_spaces) + ": " + str(mistakes))
 
-        train_err = calc_error_rate(w, b, test_data)
-        test_err = calc_error_rate(w, b, train_data)
+        train_err = calc_error_rate(w, b, train_data)
+        test_err = calc_error_rate(w, b, test_data)
         out.writerow([epoch_i, train_err, test_err])
 
         if train_err == prev_train_err:
@@ -196,7 +235,7 @@ def run_on_set(fn_suffix, num_epochs, uber_verbose=False):
             prev_train_err = train_err
 
     min_margin = "-infinity"
-    if train_err == 0:
+    if train_err == 0:  # there must exist a linear separator
         min_margin = find_min_margin(w, b, test_data)
 
     weight_ratios = np.round(w / sum(w), 3)
@@ -210,10 +249,11 @@ def run_on_set(fn_suffix, num_epochs, uber_verbose=False):
 
 
 def run_on_all_sets():
-    num_epochs = 50
+    num_epochs = 4000
     for i in range(2, 10):
         fn_suffix = "A2." + str(i) + "."
         run_on_set(fn_suffix, num_epochs)
+        tune(fn_suffix, num_epochs)
 
 
 run_on_all_sets()
